@@ -100,6 +100,19 @@ def cmd_load_partition(run_id, year, month):
     print(f'rows loaded for partition {year}-{month:02d}:', loaded)
     return loaded
 
+def cmd_benchmark(run_id, repeats):
+    from src.benchmark.storage import run_benchmark
+    curated_path = path_for('curated_dir') / 'sales_order_lines.parquet'
+    if not curated_path.exists():
+        raise FileNotFoundError(
+            f"No curated dataset at {curated_path}. Run 'transform' or 'run-all' first."
+        )
+    results = _run_stage(
+        'benchmark', run_id, run_benchmark, curated_path, path_for('benchmark_dir'), repeats
+    )
+    print(results.to_string())
+    return results
+
 
 def main():
     parser = argparse.ArgumentParser(description='DSS150P modular pipeline')
@@ -135,7 +148,7 @@ def main():
         elif args.command == 'load-partition':
             cmd_load_partition(run_id, args.year, args.month)
         elif args.command == 'benchmark':
-            raise NotImplementedError('benchmark CLI wiring — see below if not done yet')
+            cmd_benchmark(run_id, args.repeats)
     except PipelineStageError as exc:
         logger.error('Pipeline run failed: %s', exc)
         raise SystemExit(1)
