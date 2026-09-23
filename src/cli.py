@@ -7,7 +7,7 @@ from src.common.errors import PipelineStageError
 from src.extract.files import extract_sources
 from src.transform.staging import build_staging
 from src.transform.curated import build_curated
-from src.load.postgres import upsert_curated, record_pipeline_run
+from src.load.postgres import upsert_curated, record_pipeline_run, load_partition
 from src.validate.quality import validate_curated
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
@@ -88,6 +88,17 @@ def cmd_run_all(run_id):
         )
         raise
 
+def cmd_load_partition(run_id, year, month):
+    partition_path = path_for('partition_dir') / f'order_year={year}' / f'order_month={month}'
+    if not partition_path.exists():
+        raise FileNotFoundError(
+            f"No partition found at {partition_path}. Run the benchmark/partition step first."
+        )
+    df = pd.read_parquet(partition_path)
+    loaded = _run_stage('load_partition', run_id, load_partition, df, year, month, run_id)
+    print(f'rows loaded for partition {year}-{month:02d}:', loaded)
+    return loaded
+
 
 def main():
     parser = argparse.ArgumentParser(description='DSS150P modular pipeline')
@@ -120,8 +131,10 @@ def main():
             cmd_validate(run_id)
         elif args.command == 'run-all':
             cmd_run_all(run_id)
-        elif args.command in ('benchmark', 'load-partition'):
-            raise NotImplementedError(f'{args.command} is implemented in Goal 3')
+        elif args.command == 'load-partition':
+            cmd_load_partition(run_id, args.year, args.month)
+        elif args.command == 'benchmark':
+            raise NotImplementedError('benchmark CLI wiring — see below if not done yet')
     except PipelineStageError as exc:
         logger.error('Pipeline run failed: %s', exc)
         raise SystemExit(1)

@@ -42,7 +42,7 @@ WHERE curated.sales_order_lines.record_hash IS DISTINCT FROM EXCLUDED.record_has
 """
 
 
-def _get_connection():
+def get_connection():
     return psycopg.connect(
         host=DB['host'], port=DB['port'], dbname=DB['dbname'],
         user=DB['user'], password=DB['password'],
@@ -63,7 +63,7 @@ def upsert_curated(df: pd.DataFrame, run_id: str) -> int:
         return 0
 
     records = df.to_dict(orient='records')
-    with _get_connection() as conn:
+    with get_connection() as conn:
         with conn.cursor() as cur:
             cur.executemany(UPSERT_SQL, records)
         conn.commit()
@@ -90,7 +90,7 @@ def record_pipeline_run(run_id, status, rows_staging=None, rows_curated=None,
         rows_quarantined = EXCLUDED.rows_quarantined,
         message = EXCLUDED.message
     """
-    with _get_connection() as conn:
+    with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(sql, {
                 'run_id': run_id,
@@ -105,6 +105,44 @@ def record_pipeline_run(run_id, status, rows_staging=None, rows_curated=None,
         conn.commit()
 
 
-def load_partition(df, year: int, month: int, run_id: str) -> int:
-    """Load only a selected year/month partition and record audit.partition_loads."""
-    raise NotImplementedError('Implement Goal 3 selected-partition load')
+def load_partition(df: pd.DataFrame, year: int, month: int, run_id: str) -> int:
+    """Load a single year/month partition into curated.sales_order_lines and
+    record the load in audit.partition_loads.
+
+    Reuses the same rerun-safe UPSERT as upsert_curated (order_id conflict key,
+    record_hash guard) so reloading the same partition never creates duplicate
+    business rows. audit.partition_loads is itself upserted on partition_key,
+    so re-running the same partition updates its row_count/loaded_at rather
+    than creating a second audit row for the same partition.
+    """
+    if df.empty:
+        logger.info('load_partition: nothing to load for %04d-%02d', year, month)
+        return 0
+
+    records = df.to_dict(orient='records')
+    partition_key = f"{year:04d}-{month:02d}"
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.executemany(UPSERT_SQL, records)
+            cur.execute(
+                """
+                INSERT INTO audit.partition_loads (partition_key, loaded_at_utc, row_count, pipeline_run_id)
+                VALUES (%(partition_key)s, %(loaded_at)s, %(row_count)s, %(run_id)s)
+                ON CONFLICT (partition_key) DO UPDATE SET
+                    loaded_at_utc = EXCLUDED.loaded_at_utc,
+                    row_count = EXCLUDED.row_count,
+                    pipeline_run_id = EXCLUDED.pipeline_run_id
+                """,
+                {
+                    'partition_key': partition_key,
+                    'loaded_at': utc_now_iso(),
+                    'row_count': len(records),
+                    'run_id': run_id,
+                },
+            )
+        conn.commit()
+
+    logger.info('load_partition: loaded %d row(s) for partition %s (run_id=%s)',
+                len(records), partition_key, run_id)
+    return len(records)
