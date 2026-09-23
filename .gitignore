@@ -1,0 +1,26 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Secrets / env
+.env
+
+# Pipeline-generated data (reproducible via code, not committed)
+data/raw/
+data/staging/
+data/curated/
+data/quarantine/
+data/benchmarks/
+data/partitioned/
+
+# Airflow
+logs/
+
+# OS cruft
+.DS_Store
+__MACOSX/
+
+#Pycharm
+.idea
