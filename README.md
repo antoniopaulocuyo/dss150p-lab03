@@ -7,28 +7,30 @@ and Airflow orchestration.
 
 ## Project structure
 
+```
 src/
-├── config.py           # Merges config/settings.yml + .env into SETTINGS/DB
+├── config.py          # Merges config/settings.yml + .env into SETTINGS/DB
 ├── common/
-│   ├── audit.py         # utc_now_iso, new_run_id, record_hash helpers
+│   ├── audit.py        # utc_now_iso, new_run_id, record_hash helpers
 │   └── errors.py        # PipelineStageError (stage/run_id-tagged exceptions)
 ├── extract/
 │   └── files.py         # Raw source snapshotting (data/raw/run_id=...)
 ├── transform/
-│   ├── staging.py       # Dedup, typing, quality-rule quarantine
-│   └── curated.py       # Cross-source join, money calcs, record_hash
+│   ├── staging.py        # Dedup, typing, quality-rule quarantine
+│   └── curated.py        # Cross-source join, money calcs, record_hash
 ├── load/
-│   └── postgres.py      # Rerun-safe UPSERT, partition load, run audit
+│   └── postgres.py       # Rerun-safe UPSERT, partition load, run audit
 ├── validate/
-│   └── quality.py       # Post-load data contract checks
+│   └── quality.py        # Post-load data contract checks
 ├── benchmark/
-│   └── storage.py       # CSV/JSONL/Parquet/Postgres comparison + partitioning
-└── cli.py               # Thin CLI wiring all of the above
+│   └── storage.py        # CSV/JSONL/Parquet/Postgres comparison + partitioning
+└── cli.py                 # Thin CLI wiring all of the above
 
 dags/
-└── dss150p_pipeline.py  # Airflow DAG (calls src.cli only, no business logic)
+└── dss150p_pipeline.py    # Airflow DAG (calls src.cli only, no business logic)
 
-evidence/                # Screenshots + written findings per goal/task
+evidence/                   # Screenshots + written findings per goal/task
+```
 
 ## 1. Environment setup
 
