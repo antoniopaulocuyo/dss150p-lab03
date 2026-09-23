@@ -1,6 +1,7 @@
 import argparse
 import logging
 import pandas as pd
+import os
 from src.config import PROJECT_ROOT, DB, SETTINGS, path_for
 from src.common.audit import new_run_id, utc_now_iso
 from src.common.errors import PipelineStageError
@@ -119,7 +120,7 @@ def main():
         print('Configured source=', SETTINGS['pipeline']['source_dir'])
         return
 
-    run_id = new_run_id()
+    run_id = os.environ.get('PIPELINE_RUN_ID') or new_run_id()
     try:
         if args.command == 'extract':
             cmd_extract(run_id)

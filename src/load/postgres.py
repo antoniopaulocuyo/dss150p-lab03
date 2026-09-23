@@ -41,6 +41,13 @@ ON CONFLICT (order_id) DO UPDATE SET
 WHERE curated.sales_order_lines.record_hash IS DISTINCT FROM EXCLUDED.record_hash
 """
 
+TOUCH_AUDIT_COLUMNS_SQL = """
+UPDATE curated.sales_order_lines
+SET pipeline_run_id = %(run_id)s,
+    processed_at_utc = %(processed_at)s
+WHERE order_id = ANY(%(order_ids)s)
+"""
+
 
 def get_connection():
     return psycopg.connect(
@@ -53,19 +60,28 @@ def upsert_curated(df: pd.DataFrame, run_id: str) -> int:
     """Load curated.sales_order_lines using rerun-safe UPSERT semantics.
 
     order_id is the conflict key, so a rerun can never create a duplicate
-    business key — Postgres either inserts a new row or updates the existing
-    one. The WHERE clause on record_hash means a rerun with unchanged
-    business content performs a true no-op update rather than rewriting
-    every row every time.
+    business key. The record_hash guard in UPSERT_SQL means unchanged
+    business content skips a real row rewrite (no-op update), keeping
+    reruns cheap. A second, unconditional UPDATE always advances
+    pipeline_run_id/processed_at_utc for every row in the batch, so the
+    audit trail always reflects the most recent run that touched a row,
+    even when its business content didn't change.
     """
     if df.empty:
         logger.info('upsert_curated: nothing to load for run_id=%s', run_id)
         return 0
 
     records = df.to_dict(orient='records')
+    order_ids = df['order_id'].tolist()
+
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.executemany(UPSERT_SQL, records)
+            cur.execute(TOUCH_AUDIT_COLUMNS_SQL, {
+                'run_id': run_id,
+                'processed_at': utc_now_iso(),
+                'order_ids': order_ids,
+            })
         conn.commit()
 
     logger.info('upsert_curated: attempted %d row(s) for run_id=%s', len(records), run_id)
@@ -110,21 +126,28 @@ def load_partition(df: pd.DataFrame, year: int, month: int, run_id: str) -> int:
     record the load in audit.partition_loads.
 
     Reuses the same rerun-safe UPSERT as upsert_curated (order_id conflict key,
-    record_hash guard) so reloading the same partition never creates duplicate
-    business rows. audit.partition_loads is itself upserted on partition_key,
-    so re-running the same partition updates its row_count/loaded_at rather
-    than creating a second audit row for the same partition.
+    record_hash guard, unconditional audit-column touch) so reloading the same
+    partition never creates duplicate business rows and always reflects the
+    latest run that touched it. audit.partition_loads is itself upserted on
+    partition_key, so re-running the same partition updates its row_count/
+    loaded_at rather than creating a second audit row for the same partition.
     """
     if df.empty:
         logger.info('load_partition: nothing to load for %04d-%02d', year, month)
         return 0
 
     records = df.to_dict(orient='records')
+    order_ids = df['order_id'].tolist()
     partition_key = f"{year:04d}-{month:02d}"
 
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.executemany(UPSERT_SQL, records)
+            cur.execute(TOUCH_AUDIT_COLUMNS_SQL, {
+                'run_id': run_id,
+                'processed_at': utc_now_iso(),
+                'order_ids': order_ids,
+            })
             cur.execute(
                 """
                 INSERT INTO audit.partition_loads (partition_key, loaded_at_utc, row_count, pipeline_run_id)
